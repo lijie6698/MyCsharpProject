@@ -93,6 +93,8 @@ namespace DeepTrainingTest
         {
             try
             {
+                Logger.Log("尝试加载模型文件", LogLevel.Info);
+                
                 hv_DLModelHandle.Dispose();
                 HOperatorSet.ReadDlModel(@"E:\\榛子裂缝模型（语义分割）\\模型1.hdl",
                     out hv_DLModelHandle);
@@ -134,6 +136,22 @@ namespace DeepTrainingTest
                 HOperatorSet.SetDlModelParam(hv_DLModelHandle, "device", hv_DLDevice);
 
                 textBox1.AppendText("模型加载成功！\r\n"); 
+                Logger.Log("模型加载成功", LogLevel.Info);
+            }
+            catch(Exception ex)
+            {
+                Logger.Log($"模型加载失败: {ex.Message}", LogLevel.Error);
+            }
+        }
+                hv_DLDevice.Dispose();
+                using (HDevDisposeHelper dh = new HDevDisposeHelper())
+                {
+                    hv_DLDevice = hv_DLDeviceHandles.TupleSelect(
+                        0);
+                }
+                HOperatorSet.SetDlModelParam(hv_DLModelHandle, "device", hv_DLDevice);
+
+                textBox1.AppendText("模型加载成功！\r\n"); 
             }
             catch(Exception ex)
             {
@@ -147,6 +165,8 @@ namespace DeepTrainingTest
         {
             try
             {
+                Logger.Log("开始处理图片", LogLevel.Info);
+                
                 // 释放旧资源
                 ho_Image.Dispose();
                 ho_SegmentationResult.Dispose();
@@ -168,8 +188,77 @@ namespace DeepTrainingTest
                 if (openFileDialog1.ShowDialog() != DialogResult.OK)
                 {
                     textBox1.AppendText(System.Environment.NewLine + DateTime.Now.ToString("HH:mm:ss") + " 请选择文件." + System.Environment.NewLine);
+                    Logger.Log("用户取消了文件选择", LogLevel.Warning);
                     return;
                 }
+
+
+                // 1. 读取测试图片，并记录原图原始尺寸
+                HOperatorSet.ReadImage(out ho_Image, openFileDialog1.FileName);
+                Logger.Log($"成功读取图片: {openFileDialog1.FileName}", LogLevel.Info);
+                // 获取原图的原始像素尺寸（关键：用于分割结果缩放对齐）
+                HOperatorSet.GetImageSize(ho_Image, out hv_ImgOrgWidth, out hv_ImgOrgHeight);
+
+                // 2. 预处理图片并执行推理
+                halconClass.gen_dl_samples_from_images(ho_Image, out hv_DLSample);
+                halconClass.preprocess_dl_samples(hv_DLSample, hv_DLPreprocessParam);
+                HOperatorSet.ApplyDlModel(hv_DLModelHandle, hv_DLSample, new HTuple(), out hv_DLResult);
+
+                // 3. 提取分割结果图像（模型输出尺寸，如512x512）
+                HOperatorSet.GetDictObject(out ho_SegmentationResult, hv_DLResult, "segmentation_image");
+
+                // 4. 关键步骤：将分割结果缩放到原图尺寸（保证位置完全匹配）
+                // ZoomImageSize：按原图尺寸缩放分割结果，插值方式选'nearest_neighbor'避免模糊（分割结果是二值/分类图）
+                HOperatorSet.ZoomImageSize(ho_SegmentationResult, out ho_SegmentationResultScaled,
+                    hv_ImgOrgWidth, hv_ImgOrgHeight, "nearest_neighbor");
+
+                // 5. 将缩放后的分割结果转换为区域（匹配原图像素位置）
+                HOperatorSet.Threshold(ho_SegmentationResultScaled, out ho_SegmentationRegion, 1, 255);
+                HOperatorSet.Connection(ho_SegmentationRegion, out ho_SegmentationRegion);
+                HOperatorSet.Union1(ho_SegmentationRegion, out ho_SegmentationRegion);
+
+                // 6. 计算分割区域的几何特征（基于原图尺寸，结果更准确）
+                HTuple hv_Area = new HTuple(), hv_Row = new HTuple(), hv_Column = new HTuple();
+                HTuple hv_Row1 = new HTuple(), hv_Column1 = new HTuple(), hv_Row2 = new HTuple(), hv_Column2 = new HTuple();
+                HOperatorSet.AreaCenter(ho_SegmentationRegion, out hv_Area, out hv_Row, out hv_Column);
+                HOperatorSet.SmallestRectangle1(ho_SegmentationRegion, out hv_Row1, out hv_Column1, out hv_Row2, out hv_Column2);
+                HTuple hv_Width = hv_Column2 - hv_Column1;
+                HTuple hv_Height = hv_Row2 - hv_Row1;
+
+                // 7. 显示几何数据到MessageBox（尺寸是原图真实像素）
+                string msg = $"分割区域几何数据（原图尺寸）：\n" +
+                             $"面积：{hv_Area.D.ToString("F2")} 像素\n" +
+                             $"中心坐标：({hv_Row.D.ToString("F2")}, {hv_Column.D.ToString("F2")})\n" +
+                             $"最小外接矩形宽度：{hv_Width.D.ToString("F2")} 像素\n" +
+                             $"最小外接矩形高度：{hv_Height.D.ToString("F2")} 像素\n" +
+                             $"矩形对角点：({hv_Row1.D}, {hv_Column1.D}) - ({hv_Row2.D}, {hv_Column2.D})";
+                textBox1.AppendText(msg + "\r\n");
+                Logger.Log($"成功处理图片，分割区域面积: {hv_Area.D.ToString("F2")}", LogLevel.Info);
+                //MessageBox.Show(msg, "分割区域几何信息", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+
+                // 8. 显示：窗口1显示分割结果，窗口2显示原图+分割区域（精准覆盖）
+
+                Pubilc_Image_Display(ho_SegmentationResultScaled, hv_ExpDefaultWinHandle_01);
+
+                Pubilc_Image_Display(ho_Image, hv_ExpDefaultWinHandle_02);
+                // 窗口2：先显示原图（自适应），再叠加分割区域（已对齐原图位置）
+
+
+
+                // 设置区域显示样式（绿色轮廓，2像素宽）
+                HOperatorSet.SetColor(hv_ExpDefaultWinHandle_02, "green");
+                HOperatorSet.SetLineWidth(hv_ExpDefaultWinHandle_02, 2);
+                HOperatorSet.SetPaint(hv_ExpDefaultWinHandle_02, "default");
+                // 显示分割区域（精准覆盖原图对应位置）
+                HOperatorSet.DispObj(ho_SegmentationRegion, hv_ExpDefaultWinHandle_02);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"处理图片失败: {ex.Message}", LogLevel.Error);
+                MessageBox.Show($"处理失败：{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }    
+        }
 
 
                 // 1. 读取测试图片，并记录原图原始尺寸
