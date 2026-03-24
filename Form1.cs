@@ -11,7 +11,7 @@ using HalconDotNet;
 
 namespace DeepTrainingTest
 {
-    public partial class Form1 : Form
+    public partial class VisionControl : UserControl
     {
 
         #region 变量定义
@@ -55,7 +55,7 @@ namespace DeepTrainingTest
         #endregion
 
         #region 初始化区
-        public Form1()
+        public VisionControl()
         {
             InitializeComponent();
 
