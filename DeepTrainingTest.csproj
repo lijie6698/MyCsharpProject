@@ -69,11 +69,11 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Form1.cs">
+    <Compile Include="VisionControl.cs">
       <SubType>UserControl</SubType>
     </Compile>
-    <Compile Include="Form1.Designer.cs">
-      <DependentUpon>Form1.cs</DependentUpon>
+    <Compile Include="VisionControl.Designer.cs">
+      <DependentUpon>VisionControl.cs</DependentUpon>
     </Compile>
     <Compile Include="HalconClass.cs" />
     <Compile Include="Logger.cs" />
